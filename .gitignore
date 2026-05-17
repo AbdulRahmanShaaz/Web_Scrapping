@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
+env/
+
+# Local environment
+.env
+.env.*
+
+# Generated scraping output
+*.csv
+*.json
+*.db
+web_scrapping/images/
+web_scrapping/quotes/
+quotes/
+scrapped_images/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

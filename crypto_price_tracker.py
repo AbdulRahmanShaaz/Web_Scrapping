@@ -1,111 +1,138 @@
+import argparse
+import logging
+import sqlite3
+import sys
 import time
 from datetime import datetime
-import requests
-import matplotlib.pyplot as plt
-import schedule
-import sqlite3
+from pathlib import Path
 
+import matplotlib.pyplot as plt
+import requests
+import schedule
 
 API_URL = "https://api.coingecko.com/api/v3/coins/markets"
 PARAMS = {
-    'vs_currency': 'usd',
-    'order': 'market_cap_desc',
-    'per_page': 10,
-    'page': 1,
-    'sparkline': False
+    "vs_currency": "usd",
+    "order": "market_cap_desc",
+    "per_page": 10,
+    "page": 1,
+    "sparkline": False,
 }
-
-# 🔥 In-memory storage (replace with DB later)
-price_store = {}   # {coin_id: [(timestamp, price), ...]}
-
-def create_table():
-    con = sqllite3.connect("crypto.db")
-    cur = con.cursor()
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+TIMEOUT = 10
+DB_FILE = Path("crypto.db")
 
 
-def fetch_crypto_data():
-
-    try:
-        print("🌐 Fetching crypto data...")
-        response = requests.get(API_URL, params=PARAMS, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        print(f"❌ Fetch failed: {e}")
-        return []
+def configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def store_data(data):
-    timestamp = datetime.now()
-
-    for coin in data:
-        coin_id = coin["id"]
-        price = coin["current_price"]
-
-        if coin_id not in price_store:
-            price_store[coin_id] = []
-
-        price_store[coin_id].append((timestamp, price))
-
-    print(f"💾 Stored data at {timestamp.strftime('%H:%M:%S')}")
-
-
-# Scheduled job
-def job():
-    data = fetch_crypto_data()
-    if data:
-        store_data(data)
+def initialize_database(db_path: Path) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(db_path)
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prices (
+            coin_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            price REAL NOT NULL
+        )
+        """
+    )
+    connection.commit()
+    return connection
 
 
-def plot_graph(coin_id):
-    if coin_id not in price_store or not price_store[coin_id]:
-        print(f"⚠️ No data available for '{coin_id}'")
+def fetch_crypto_data(session: requests.Session) -> list[dict]:
+    response = session.get(API_URL, params=PARAMS, timeout=TIMEOUT)
+    response.raise_for_status()
+    return response.json()
+
+
+def store_data(connection: sqlite3.Connection, data: list[dict]) -> None:
+    timestamp = datetime.utcnow().isoformat()
+    cursor = connection.cursor()
+    cursor.executemany(
+        "INSERT INTO prices (coin_id, timestamp, price) VALUES (?, ?, ?)",
+        [(coin["id"], timestamp, float(coin["current_price"])) for coin in data],
+    )
+    connection.commit()
+    logging.info("Stored %d price records", len(data))
+
+
+def plot_graph(connection: sqlite3.Connection, coin_id: str) -> None:
+    cursor = connection.cursor()
+    cursor.execute(
+        "SELECT timestamp, price FROM prices WHERE coin_id = ? ORDER BY timestamp",
+        (coin_id,),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        logging.warning("No stored price history for %s", coin_id)
         return
 
-    times = [t for t, _ in price_store[coin_id]]
-    prices = [p for _, p in price_store[coin_id]]
-
+    timestamps, prices = zip(*rows)
     plt.figure(figsize=(10, 5))
-    plt.plot(times, prices, marker='o')
-    plt.title(f"{coin_id.upper()} Price Over Time")
-    plt.xlabel("Time")
+    plt.plot(timestamps, prices, marker="o")
+    plt.title(f"{coin_id.upper()} Price History")
+    plt.xlabel("Timestamp")
     plt.ylabel("Price (USD)")
     plt.xticks(rotation=45)
-    plt.grid()
+    plt.grid(True)
     plt.tight_layout()
-    plt.gcf().autofmt_xdate()
     plt.show()
 
 
-def main():
-    print("🚀 Crypto Tracker Started\n")
+def scheduled_job(connection: sqlite3.Connection, session: requests.Session) -> None:
+    data = fetch_crypto_data(session)
+    store_data(connection, data)
 
-    # 🔥 Run once immediately
-    job()
 
-    # 🔥 Schedule hourly
-    schedule.every().hour.do(job)
+def main() -> int:
+    configure_logging()
 
-    # 🔥 Show available coins (initial snapshot)
-    data = fetch_crypto_data()
-    print("\n📊 Available coin IDs:")
-    for coin in data:
-        print(f"- {coin['id']}")
+    parser = argparse.ArgumentParser(description="Track cryptocurrency prices using the CoinGecko API and persist them to a database.")
+    parser.add_argument("--interval", type=int, default=60, help="Polling interval in minutes")
+    parser.add_argument("--plot", help="Plot price history for a coin ID")
+    parser.add_argument("--run-once", action="store_true", help="Fetch data once and exit")
+    args = parser.parse_args()
 
-    # 🔥 Ask user
-    choice = input("\n📈 Do you want to plot a graph? (yes/no): ").strip().lower()
+    session = requests.Session()
+    session.headers.update(HEADERS)
 
-    if choice == "yes":
-        coin_id = input("Enter coin ID: ").strip().lower()
-        plot_graph(coin_id)
+    try:
+        connection = initialize_database(DB_FILE)
+    except sqlite3.Error as exc:
+        logging.error("Failed to initialize database: %s", exc)
+        return 1
 
-    print("\n⏳ Scheduler running... (Ctrl+C to stop)\n")
+    try:
+        if args.run_once:
+            data = fetch_crypto_data(session)
+            store_data(connection, data)
+            return 0
 
-    # 🔥 Keep scheduler alive
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+        scheduled_job(connection, session)
+        schedule.every(args.interval).minutes.do(scheduled_job, connection, session)
+
+        if args.plot:
+            plot_graph(connection, args.plot)
+
+        logging.info("Scheduler started. Fetching every %d minutes.", args.interval)
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+    except requests.RequestException as exc:
+        logging.error("Network error: %s", exc)
+        return 1
+    except KeyboardInterrupt:
+        logging.info("Stopped by user")
+        return 0
+    except Exception as exc:
+        logging.error("Unexpected error: %s", exc)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

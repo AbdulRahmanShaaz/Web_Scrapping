@@ -1,101 +1,97 @@
-import os
+import argparse
+import logging
+import re
+from pathlib import Path
+from urllib.parse import urljoin
+
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-import re
-import wget
 
 BASE_URL = "https://books.toscrape.com/"
-IMAGES_DIR = "web_scrapping/images"
+DEFAULT_OUTPUT_DIR = Path("web_scrapping/images")
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+TIMEOUT = 10
 
 
-def sanitize_filename(filename):
-    return re.sub(r'[^\w\-_\. ]', '', filename).replace(' ', '_')
+def configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def download_image(image_url, title):
-    try:
-        print(f"🌐 Sending request to: {image_url}")
-
-        response = requests.get(image_url, timeout=10, stream=True)
-        response.raise_for_status()
-
-        file_name = sanitize_filename(title) + ".jpg"
-        file_path = os.path.join(IMAGES_DIR, file_name)
-
-        print(f"📁 File name: {file_name}")
-        print(f"📂 Saving to path: {file_path}")
-
-        with open(file_path, 'wb') as f:
-            print("🧩 Starting to write chunks...")
-
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-
-        print(f"✅ Image downloaded successfully: {title}")
-
-    except Exception as e:
-        print(f"❌ Error downloading image: {e}")
+def sanitize_filename(filename: str) -> str:
+    sanitized = re.sub(r"[^\w\-_. ]", "", filename)
+    return sanitized.strip().replace(" ", "_")
 
 
-def scrape_and_download_images(url):
-    print(f"🚀 Starting scraping from: {url}")
+def fetch_html(session: requests.Session, url: str) -> str:
+    response = session.get(url, timeout=TIMEOUT)
+    response.raise_for_status()
+    logging.info("Fetched page: %s", url)
+    return response.text
 
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        print(f"❌ Failed to fetch page: {e}")
+
+def parse_book_data(html: str) -> list[tuple[str, str]]:
+    soup = BeautifulSoup(html, "html.parser")
+    books = []
+    for book in soup.select("article.product_pod")[:10]:
+        title_tag = book.select_one("h3 > a")
+        img_tag = book.select_one("img")
+
+        title = title_tag["title"].strip() if title_tag else "untitled"
+        image_path = img_tag["src"] if img_tag else ""
+        books.append((title, image_path))
+    return books
+
+
+def download_image(session: requests.Session, image_url: str, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    response = session.get(image_url, timeout=TIMEOUT, stream=True)
+    response.raise_for_status()
+
+    with output_path.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                handle.write(chunk)
+    logging.info("Saved image: %s", output_path)
+
+
+def scrape_and_download_images(base_url: str, output_dir: Path) -> None:
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    html = fetch_html(session, base_url)
+    books = parse_book_data(html)
+
+    if not books:
+        logging.warning("No books found on page: %s", base_url)
         return
 
-    print("✅ Page fetched successfully")
+    for index, (title, relative_src) in enumerate(books, start=1):
+        logging.info("Processing book %d: %s", index, title)
+        image_url = urljoin(base_url, relative_src)
+        file_name = sanitize_filename(title) or f"book_{index}"
+        output_path = output_dir / f"{file_name}.jpg"
+        download_image(session, image_url, output_path)
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    print("🧠 Parsed HTML with BeautifulSoup")
+    logging.info("Completed downloading %d images", len(books))
 
-    books = soup.select('article.product_pod')[:10]
-    print(f"📚 Total books selected: {len(books)}")
 
-    if not os.path.exists(IMAGES_DIR):
-        print(f"📁 Creating directory: {IMAGES_DIR}")
-        os.makedirs(IMAGES_DIR)
-    else:
-        print(f"📁 Directory already exists: {IMAGES_DIR}")
+def main() -> int:
+    configure_logging()
+    parser = argparse.ArgumentParser(description="Download book cover images from books.toscrape.com.")
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory to save downloaded images")
+    args = parser.parse_args()
 
-    for index, book in enumerate(books, start=1):
-        print("\n" + "=" * 50)
-        print(f"🔢 Processing book #{index}")
+    try:
+        scrape_and_download_images(BASE_URL, Path(args.output_dir))
+    except requests.RequestException as exc:
+        logging.error("Network request failed: %s", exc)
+        return 1
+    except Exception as exc:
+        logging.error("Unexpected error: %s", exc)
+        return 1
 
-        title = book.h3.a['title']
-        print(f"📖 Title: {title}")
-
-        img_tag = book.find('img')
-        if not img_tag:
-            print("⚠️ No image tag found, skipping...")
-            continue
-
-        relative_image_url = img_tag['src']
-        print(f"🔗 Relative image URL: {relative_image_url}")
-
-        image_url = urljoin(BASE_URL, relative_image_url)
-        print(f"🌍 Absolute image URL: {image_url}")
-
-        file_name = sanitize_filename(title) + ".jpg"
-        file_path = os.path.join(IMAGES_DIR, file_name)
-
-        print(f"📝 Final file name: {file_name}")
-        print(f"📂 Final file path: {file_path}")
-
-        print(f"📥 Downloading image for: {title}")
-
-        # download_image(image_url, title)
-        wget.download(image_url, out=file_path)
-
-        print(f"✅ Finished processing: {title}")
-
-    print("\n🎉 All done!")
+    return 0
 
 
 if __name__ == "__main__":
-    scrape_and_download_images(BASE_URL)
+    raise SystemExit(main())

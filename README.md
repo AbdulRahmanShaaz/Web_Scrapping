@@ -4,18 +4,18 @@
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI Status](https://github.com/AbdulRahmanShaaz/Web_Scrapping/actions/workflows/ci.yml/badge.svg)](https://github.com/AbdulRahmanShaaz/Web_Scrapping/actions)
 
-A comprehensive collection of professional-grade web scraping solutions showcasing real-world data extraction patterns, multi-page pagination, API integration, and file format conversion.
+A polished collection of professional web scraping solutions with modern CLI usage, reusable HTTP sessions, structured exports, and production-ready error handling.
 
 ## 🎯 Features
 
 - **Multi-source data collection** from Wikipedia, Hacker News, public APIs, and e-commerce sites
-- **Multiple output formats**: CSV, JSON, PNG images
-- **Pagination handling** for large datasets
+- **Command-line interfaces** for each scraper using `argparse`
+- **Structured output formats**: CSV, JSON, PNG images, and SQLite storage
+- **Pagination handling** for multi-page scraping
 - **API integration** (CoinGecko, public web APIs)
-- **Image processing** with PIL
-- **Error handling & retry logic**
-- **Professional git history** with 11+ semantic commits
-- **GitHub Actions CI/CD** pipeline included
+- **Image generation** with Pillow and HTML parsing
+- **Robust logging and error handling**
+- **GitHub Actions CI** workflow included for dependency install and lint verification
 
 ## 📋 Project Structure
 
@@ -64,60 +64,59 @@ pip install -r requirements.txt
 ### Wikipedia Headings Scraper
 Extract H2 headings from Wikipedia pages:
 ```bash
-python scrapping_wikki_headings.py
+python scrapping_wikki_headings.py --url https://en.wikipedia.org/wiki/Web_scraping
 ```
 
 ### Hacker News Top Stories
 Fetch top Hacker News stories and export to CSV:
 ```bash
-python hacker_news_csv.py
-# Output: hn_top20.csv
+python hacker_news_csv.py --limit 20 --output hn_top20.csv
 ```
 
 ### Multi-Page Books Scraper
 Scrape book data across multiple pages with pagination:
 ```bash
-python MultiPage_Scrapping.py
-# Demonstrates: pagination, data aggregation, structured output
+python MultiPage_Scrapping.py --limit 70 --output output.json
 ```
 
 ### Download Book Covers
-Download book cover images with automatic retry:
+Download book cover images with a clean save location:
 ```bash
-python Download_image_rawCode.py
-# Output: scrapped_images/ folder
+python Download_image_rawCode.py --output-dir web_scrapping/images
 ```
 
 ### Generate Quote Images
-Convert quotes to PNG images with custom styling:
+Convert quotes into styled PNG images:
 ```bash
-python generate_images_quotes.py
-# Output: quotes/ folder with PNG files
+python generate_images_quotes.py --count 5 --output-dir web_scrapping/quotes
 ```
 
 ### Crypto Price Tracker
-Fetch live cryptocurrency prices from CoinGecko API:
+Fetch live cryptocurrency prices and store them in SQLite:
 ```bash
-python crypto_price_tracker.py
-python day_08.py
+python crypto_price_tracker.py --run-once
+python crypto_price_tracker.py --interval 60 --plot bitcoin
 ```
 
 ## 🔧 Technical Details
 
 ### Libraries Used
-- **requests** - HTTP requests & API calls
+- **requests** - HTTP requests & session reuse
 - **BeautifulSoup4** - HTML parsing
-- **Pillow (PIL)** - Image processing
-- **csv** - Data export
-- **json** - JSON serialization
+- **Pillow (PIL)** - Image creation and styling
+- **matplotlib** - Plotting crypto price history
+- **schedule** - periodic background polling
+- **sqlite3** - persistent price storage
+- **csv** / **json** - structured exports
 
 ### Key Patterns Implemented
 - HTML parsing with CSS selectors
-- Pagination & session management
-- API integration & response handling
-- File I/O (CSV, JSON, images)
-- Error handling & logging
-- Rate limiting (polite scraping)
+- CLI-driven workflows using `argparse`
+- Reusable `requests.Session` objects and headers
+- Pagination & loop protection
+- Structured data export to CSV, JSON, images, and SQLite
+- Graceful error handling, logging, and HTTP status checks
+- Responsible scraping with custom User-Agent and timeouts
 
 ## ⚖️ Ethical Scraping Guidelines
 
